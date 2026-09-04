@@ -18,7 +18,7 @@ import {
 } from "./catalog.mjs";
 import { change, validate } from "./change.mjs";
 import { doc } from "./doc.mjs";
-import { search } from "./search.mjs";
+import { corpus, search } from "./search.mjs";
 import { changeIds, resolveRoot } from "./store.mjs";
 
 const ROUTES = {
@@ -56,6 +56,15 @@ const ROUTES = {
     if (q === null) return { error: "missing ?q" };
     return search(q, { archive: url.searchParams.get("archive") === "1" });
   },
+  // The text the search reads, for a page that has to run the search itself — a snapshot,
+  // or the page mounted live under a path. In two halves, the plan and the archive, so
+  // the second is fetched only when asked for; `archive=1` is the archive alone, not
+  // the whole store, because the page already holds the first half.
+  "/api/corpus": (url) => ({
+    documents: corpus(resolveRoot().path, {
+      archive: url.searchParams.get("archive") === "1" ? "only" : false,
+    }),
+  }),
   // Addressed by path rather than by id, because a document outside `openspec/` has no
   // id — what a spec's link gives us is where the file is, and that is the whole key.
   "/api/doc": (url) => {
@@ -92,6 +101,21 @@ export function warmUp() {
 
 /** True for any path this handler owns, so a static server knows what not to answer. */
 export const isApiPath = (pathname) => pathname.startsWith("/api/");
+
+/**
+ * The answer to one request, as the route would give it. Throws on a path no route
+ * owns, and returns the route's own `{ error }` for an argument it cannot serve.
+ *
+ * The one entry both the handler below and the snapshot writer go through, so a
+ * snapshot files exactly what the server would have said — an answer that differs
+ * between the two is the failure this file exists to make impossible.
+ */
+export function answer(request) {
+  const url = new URL(request, "http://localhost");
+  const route = ROUTES[url.pathname];
+  if (!route) throw new Error(`no route ${url.pathname}`);
+  return route(url);
+}
 
 /**
  * `(req, res) => void`, in the shape both connect and `node:http` accept.

@@ -369,6 +369,55 @@ Two things worth knowing about the implementation:
 - **It is opt-in.** Proposals and design docs render as ordinary prose; colouring a stray
   "must" in a proposal would imply a normative weight the document does not carry.
 
+## Hosting it as files
+
+```bash
+pnpm exec openspec-viewer snapshot out/viewer    # then serve out/ anywhere
+```
+
+The served page needs a Node process with the store on its disk, the `openspec` CLI on its
+PATH and git behind it, which rules out every host that serves files and runs nothing —
+and that is where a team's manual already lives. `snapshot` is the same page with every
+answer written down first: it copies the built page into the directory, then asks its own
+routes everything the page could ask — the board, the catalogue, the archive, every change,
+every capability, every markdown file in the store, `validate --strict` per change in
+development — and files each answer as JSON where the page will look for it.
+
+**One page, two ways of asking.** The page decides which it is from a `<meta>` tag the
+writer stamps into `index.html`, holding the moment the store was read. Nothing is rebuilt:
+the snapshot is the same `dist/` the binary serves, so a published copy of this package can
+write one without Vite. A snapshot page fetches `api/board.json` instead of `/api/board`,
+relative rather than absolute, so the directory can sit under any path — `/viewer/` on a
+manual site — without having been told about it. It never polls, since the files cannot
+change under it, and the foot of the page says when the snapshot was taken rather than when
+it was last read.
+
+**Search runs in the browser.** It is the one route with no fixed answer, so the writer
+ships the text instead — the plan in one file, the archive in a second fetched only when
+the reader asks for shipped changes — and the page runs the same matching over it that the
+server runs over the disk. The same function, in `src/search.js`, so the two cannot rank a
+query differently.
+
+**A missing file says so.** A static host answers a path it does not have with the page
+itself, which is what lets a deep link into a single-page site load at all, and so a
+document not in the snapshot arrives as HTML with a 200 on it. The page checks the content
+type before parsing and reports `Not in this snapshot` rather than a parser's confusion.
+
+**Or mounted live, under a path.** A host that has the store but not the root — a
+manual's dev server, which owns `/` — can stand where the files would be: `mounted()` in
+`server/mount.mjs` is a connect handler that serves the page stamped `live` and answers
+each snapshot path from the store as the request arrives, `requestFor` reading the file's
+name back into the request it stands for. The page asks relatively, as a snapshot does,
+and keeps polling, as the served page does; only the address differs.
+
+```js
+server.middlewares.use("/viewer", mounted()); // vite, express, connect
+```
+
+**What it costs.** A snapshot of a store here is about a thousand files and fourteen
+megabytes of JSON, most of it the archive and the documents, and forty seconds to write
+with validation on. `--no-validate` drops the CLI runs, which are most of that time.
+
 ## Read-only, deliberately
 
 No writes, and no write endpoint. Claims and checkmarks stay git commits made by the

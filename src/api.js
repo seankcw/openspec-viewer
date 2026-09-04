@@ -1,6 +1,52 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { searchDocuments } from "./search.js";
+import { corpusPath, LIVE, SNAPSHOT_META, snapshotPath } from "./snapshot.js";
 import { HEADING_KEY, positionIn, SCENARIO_KEY } from "./toc.js";
+
+/**
+ * The tag in the page's own head, read once: a page does not change what it is while it
+ * is open. Absent on the page the binary serves.
+ */
+const STAMP =
+  typeof document === "undefined"
+    ? null
+    : (document.querySelector(`meta[name="${SNAPSHOT_META}"]`)?.content ??
+      null);
+
+/**
+ * Whether this page asks for its answers at the snapshot's paths, relative to wherever
+ * it is mounted, rather than at `/api/...` on its own origin. True for a snapshot and
+ * for the page mounted live under a path — see `LIVE` — and the one thing the two share.
+ */
+export const MOUNTED = STAMP !== null;
+
+/**
+ * When this page is a snapshot — files written by `openspec-viewer snapshot` and served
+ * with no store behind them — the moment the store was read, as an ISO string. Null on
+ * the served page and on one mounted live, both of which read the store as it is now.
+ */
+export const SNAPSHOT = STAMP !== null && STAMP !== LIVE ? STAMP : null;
+
+/**
+ * What to fetch for one API path. The served page asks the server; a mounted page asks
+ * at the agreed place, relative to wherever it is mounted.
+ */
+const urlFor = (path) => (MOUNTED ? snapshotPath(path) : path);
+
+/**
+ * A static host answers a path it does not have with the page itself — that is what
+ * lets a deep link into a single-page site load — so a missing snapshot file arrives as
+ * HTML with a 200 on it, and `res.json()` reports an unexpected `<`. Read the type
+ * first, so the reader is told the document is not in this snapshot rather than shown a
+ * parser's confusion.
+ */
+async function bodyOf(res, path) {
+  const type = res.headers.get("content-type") ?? "";
+  if (MOUNTED && !type.includes("json"))
+    throw new Error(`Not in this snapshot: ${path}`);
+  return res.json();
+}
 
 // The store changes when someone runs git, not while the page is open, so polling is
 // enough and there is no socket to keep alive.
@@ -30,8 +76,8 @@ export function useApi(path, { poll = true } = {}) {
   const load = useCallback(async () => {
     if (!path) return;
     try {
-      const res = await fetch(path);
-      const body = await res.json();
+      const res = await fetch(urlFor(path));
+      const body = await bodyOf(res, path);
       if (!res.ok || body.error)
         throw new Error(body.error ?? `HTTP ${res.status}`);
       setState({ data: body, error: null, at: Date.now(), loading: false });
@@ -55,7 +101,9 @@ export function useApi(path, { poll = true } = {}) {
   }, [load]);
 
   useEffect(() => {
-    if (!poll) return undefined;
+    // A snapshot cannot change under the reader: the files were written once. Polling
+    // them would re-read the same answer forever, so the timer is never started.
+    if (!poll || SNAPSHOT) return undefined;
     // Not on the first run — the effect above has just loaded this path. This is for
     // polling switched back on, where a reader returning to a view wants it read now
     // rather than whenever the interval next comes round.
@@ -72,6 +120,93 @@ export function useApi(path, { poll = true } = {}) {
   }, [load, poll]);
 
   return { ...state, reload: load };
+}
+
+/**
+ * The corpus a snapshot ships, fetched once per half and kept for the life of the page:
+ * a snapshot's files cannot change, and three megabytes of markdown are the same three
+ * megabytes on every query. Mounted live, the host reads the store per request and a
+ * kept copy would miss the spec saved a minute ago, so nothing is kept — a search is a
+ * query at a time, not a keystroke at a time, and the fetch is paid per search.
+ */
+const corpora = new Map();
+
+function corpus(archive) {
+  const path = corpusPath(archive);
+  if (!corpora.has(path)) {
+    corpora.set(
+      path,
+      fetch(path)
+        .then((res) => bodyOf(res, path))
+        .then((body) => body.documents)
+        .finally(() => {
+          // A failed fetch is not an answer to keep either way: the next query asks again.
+          if (!SNAPSHOT) corpora.delete(path);
+        })
+        .catch((err) => {
+          corpora.delete(path);
+          throw err;
+        }),
+    );
+  }
+  return corpora.get(path);
+}
+
+/**
+ * Everything in the store that says `query`, in the same shape from both kinds of page.
+ *
+ * The served page asks the server, which reads the store. A snapshot has no server, so
+ * the page fetches the text the writer shipped and runs the same matching over it here —
+ * the same function, so the two cannot rank a query differently. So does the page mounted
+ * live, whose host answers the snapshot's paths and no other. Both hooks are called
+ * on every render, since which page this is does not change while it is open and a hook
+ * that is sometimes skipped breaks the rules hooks are built on; the one not in use is
+ * given nothing to do.
+ */
+export function useSearch(query, { archive = false } = {}) {
+  const q = query ?? "";
+  const served = useApi(
+    q && !MOUNTED
+      ? `/api/search?q=${encodeURIComponent(q)}${archive ? "&archive=1" : ""}`
+      : null,
+    { poll: false },
+  );
+
+  const [documents, setDocuments] = useState({
+    data: null,
+    error: null,
+    loading: false,
+  });
+  useEffect(() => {
+    if (!MOUNTED || !q) return undefined;
+    let current = true;
+    setDocuments((s) => ({ ...s, loading: true }));
+    Promise.all([corpus(false), archive ? corpus(true) : []])
+      .then(([plan, shipped]) => {
+        if (current)
+          setDocuments({
+            data: [...plan, ...shipped],
+            error: null,
+            loading: false,
+          });
+      })
+      .catch((err) => {
+        if (current)
+          setDocuments({ data: null, error: err.message, loading: false });
+      });
+    return () => {
+      current = false;
+    };
+  }, [q, archive]);
+
+  const matched = useMemo(
+    () =>
+      documents.data ? searchDocuments(documents.data, q, { archive }) : null,
+    [documents.data, q, archive],
+  );
+
+  if (!MOUNTED) return served;
+  return { data: matched, error: documents.error, loading: documents.loading };
 }
 
 /** Where an empty hash lands, and the shape every route has. */

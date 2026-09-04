@@ -18,6 +18,7 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { apiHandler, isApiPath, warmUp } from "../server/api.mjs";
+import { writeSnapshot } from "../server/snapshot.mjs";
 import { ORIGIN } from "../server/store.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
@@ -58,6 +59,7 @@ function parseArgs(argv) {
 const HELP = `openspec-viewer — a read-only web view of an OpenSpec store
 
   openspec-viewer [--port <n>] [--no-open]
+  openspec-viewer snapshot <dir> [--no-validate]
 
 Run it in a repo that declares a store in openspec/config.yaml, or inside the
 store itself. The store is resolved by the openspec CLI, which must be on PATH.
@@ -65,6 +67,11 @@ store itself. The store is resolved by the openspec CLI, which must be on PATH.
   --port, -p <n>   port to listen on (default ${DEFAULT_PORT})
   --no-open        do not open a browser
   --help, -h       this text
+
+snapshot writes the page and every answer it would give into <dir>, as files a
+static host can serve with nothing running behind them — mount the directory
+anywhere, under any path. --no-validate skips \`openspec validate --strict\`,
+which is one CLI run per change in development.
 `;
 
 /**
@@ -109,7 +116,10 @@ function serve(req, res) {
   createReadStream(file).pipe(res);
 }
 
-const opts = parseArgs(process.argv.slice(2));
+// The subcommand reads its own arguments below; the server's parser would refuse them.
+const opts = parseArgs(
+  process.argv[2] === "snapshot" ? [] : process.argv.slice(2),
+);
 if (opts.help) {
   process.stdout.write(HELP);
   process.exit(0);
@@ -121,6 +131,37 @@ if (!existsSync(join(DIST, "index.html"))) {
       "A published copy ships one; from a clone, run `pnpm build` first.",
   );
   process.exit(1);
+}
+
+// `snapshot <dir>` writes the page and every answer as files and exits, for a host that
+// serves files and runs nothing. Handled after the dist check above, since the page is
+// the first thing it copies, and before the port is touched, since it needs none.
+if (process.argv[2] === "snapshot") {
+  const rest = process.argv.slice(3);
+  const validate = !rest.includes("--no-validate");
+  const dir = rest.find((arg) => !arg.startsWith("--"));
+  const unknown = rest.find(
+    (arg) => arg.startsWith("--") && arg !== "--no-validate",
+  );
+  if (unknown) {
+    console.error(`openspec-viewer: unknown argument '${unknown}'`);
+    process.exit(2);
+  }
+  if (!dir) {
+    console.error("openspec-viewer: snapshot needs a directory to write into");
+    process.exit(2);
+  }
+  console.log(`openspec-viewer  writing a snapshot to ${dir}`);
+  try {
+    const done = writeSnapshot(dir, { validate, log: console.log });
+    console.log(`  taken ${done.at}`);
+  } catch (err) {
+    console.error(
+      `openspec-viewer: ${err.stderr?.toString().trim() || err.message}`,
+    );
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 const server = createServer(serve);

@@ -23,7 +23,7 @@ import { TreeList } from "@astryxdesign/core/TreeList";
 import { Theme } from "@astryxdesign/core/theme";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import { useMemo, useState } from "react";
-import { href, POLL_MS, useApi, useRoute } from "./api.js";
+import { href, POLL_MS, SNAPSHOT, useApi, useRoute } from "./api.js";
 import {
   capabilityFlag,
   capabilityTreeByNamespace,
@@ -61,9 +61,14 @@ function StoreStatus({ store }) {
     <VStack gap={1}>
       <HStack gap={2} align="center" wrap="wrap">
         <Text weight="semibold">{store.id ?? "(local)"}</Text>
-        <Text size="sm" color="secondary" className="mono">
-          {store.path}
-        </Text>
+        {/* The path is where the clone was read from, which on a served page is a
+            directory the reader can open. In a snapshot it is a directory on whatever
+            machine wrote the files, which tells the reader nothing and looks like a leak. */}
+        {!SNAPSHOT && (
+          <Text size="sm" color="secondary" className="mono">
+            {store.path}
+          </Text>
+        )}
       </HStack>
       <Text size="sm" color="secondary">
         {bits.join(" · ")}
@@ -531,20 +536,24 @@ export default function App() {
 
           <HStack gap={2} align="center" wrap="wrap">
             <Text size="sm" color="secondary">
-              Read from disk
+              {SNAPSHOT ? "Snapshot of the store taken" : "Read from disk"}
             </Text>
-            {/* The client's fetch time, not the server's read time: the two clocks differ by
-              enough that generatedAt rendered as "in a few seconds". */}
+            {/* On the served page, the client's fetch time rather than the server's read
+              time: the two clocks differ by enough that generatedAt rendered as "in a
+              few seconds". A snapshot has no client-side read worth dating — its files
+              are as old as the moment the writer read the store, which is the one time
+              the reader needs. */}
             <Timestamp
-              value={iso(at)}
+              value={SNAPSHOT ?? iso(at)}
               format="relative"
               size="sm"
               color="secondary"
               isLive
             />
             <Text size="sm" color="secondary">
-              · polling every {POLL_MS / 1000}s · claims and checkmarks are git
-              commits, and this page only reads them.
+              {SNAPSHOT
+                ? "· nothing here updates until the next snapshot is published · claims and checkmarks are git commits, and this page only reads them."
+                : `· polling every ${POLL_MS / 1000}s · claims and checkmarks are git commits, and this page only reads them.`}
             </Text>
           </HStack>
         </VStack>

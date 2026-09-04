@@ -8,7 +8,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { Switch } from "@astryxdesign/core/Switch";
 import { Text } from "@astryxdesign/core/Text";
 import { useState } from "react";
-import { href, useApi } from "../api.js";
+import { href, useSearch } from "../api.js";
 import { docHref } from "../links.js";
 
 /**
@@ -151,12 +151,7 @@ export default function Search({ query }) {
   const [archive, setArchive] = useState(false);
   const q = query ?? "";
 
-  const { data, error, loading } = useApi(
-    q
-      ? `/api/search?q=${encodeURIComponent(q)}${archive ? "&archive=1" : ""}`
-      : null,
-    { poll: false },
-  );
+  const { data, error, loading } = useSearch(q, { archive });
 
   const head = (
     <VStack gap={2}>
