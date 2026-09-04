@@ -1,26 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { searchDocuments } from "./search.js";
-import { corpusPath, SNAPSHOT_META, snapshotPath } from "./snapshot.js";
+import { corpusPath, LIVE, SNAPSHOT_META, snapshotPath } from "./snapshot.js";
 import { HEADING_KEY, positionIn, SCENARIO_KEY } from "./toc.js";
 
 /**
- * When this page is a snapshot — files written by `openspec-viewer snapshot` and served
- * with no store behind them — the moment the store was read, as an ISO string. Null on
- * the served page. Read once: the tag is in the page's own head, and a page does not
- * change what it is while it is open.
+ * The tag in the page's own head, read once: a page does not change what it is while it
+ * is open. Absent on the page the binary serves.
  */
-export const SNAPSHOT =
+const STAMP =
   typeof document === "undefined"
     ? null
     : (document.querySelector(`meta[name="${SNAPSHOT_META}"]`)?.content ??
       null);
 
 /**
- * What to fetch for one API path. The served page asks the server; a snapshot asks for
- * the file the writer left at the agreed place, relative to wherever the page is mounted.
+ * Whether this page asks for its answers at the snapshot's paths, relative to wherever
+ * it is mounted, rather than at `/api/...` on its own origin. True for a snapshot and
+ * for the page mounted live under a path — see `LIVE` — and the one thing the two share.
  */
-const urlFor = (path) => (SNAPSHOT ? snapshotPath(path) : path);
+export const MOUNTED = STAMP !== null;
+
+/**
+ * When this page is a snapshot — files written by `openspec-viewer snapshot` and served
+ * with no store behind them — the moment the store was read, as an ISO string. Null on
+ * the served page and on one mounted live, both of which read the store as it is now.
+ */
+export const SNAPSHOT = STAMP !== null && STAMP !== LIVE ? STAMP : null;
+
+/**
+ * What to fetch for one API path. The served page asks the server; a mounted page asks
+ * at the agreed place, relative to wherever it is mounted.
+ */
+const urlFor = (path) => (MOUNTED ? snapshotPath(path) : path);
 
 /**
  * A static host answers a path it does not have with the page itself — that is what
@@ -31,7 +43,7 @@ const urlFor = (path) => (SNAPSHOT ? snapshotPath(path) : path);
  */
 async function bodyOf(res, path) {
   const type = res.headers.get("content-type") ?? "";
-  if (SNAPSHOT && !type.includes("json"))
+  if (MOUNTED && !type.includes("json"))
     throw new Error(`Not in this snapshot: ${path}`);
   return res.json();
 }
@@ -111,9 +123,11 @@ export function useApi(path, { poll = true } = {}) {
 }
 
 /**
- * The corpus a snapshot ships, fetched once per half and kept for the life of the page.
- * A search is typed a character at a time, and three megabytes of markdown are the
- * same three megabytes on every keystroke.
+ * The corpus a snapshot ships, fetched once per half and kept for the life of the page:
+ * a snapshot's files cannot change, and three megabytes of markdown are the same three
+ * megabytes on every query. Mounted live, the host reads the store per request and a
+ * kept copy would miss the spec saved a minute ago, so nothing is kept — a search is a
+ * query at a time, not a keystroke at a time, and the fetch is paid per search.
  */
 const corpora = new Map();
 
@@ -125,8 +139,11 @@ function corpus(archive) {
       fetch(path)
         .then((res) => bodyOf(res, path))
         .then((body) => body.documents)
+        .finally(() => {
+          // A failed fetch is not an answer to keep either way: the next query asks again.
+          if (!SNAPSHOT) corpora.delete(path);
+        })
         .catch((err) => {
-          // A failed fetch is not an answer to keep: the next query should ask again.
           corpora.delete(path);
           throw err;
         }),
@@ -140,7 +157,8 @@ function corpus(archive) {
  *
  * The served page asks the server, which reads the store. A snapshot has no server, so
  * the page fetches the text the writer shipped and runs the same matching over it here —
- * the same function, so the two cannot rank a query differently. Both hooks are called
+ * the same function, so the two cannot rank a query differently. So does the page mounted
+ * live, whose host answers the snapshot's paths and no other. Both hooks are called
  * on every render, since which page this is does not change while it is open and a hook
  * that is sometimes skipped breaks the rules hooks are built on; the one not in use is
  * given nothing to do.
@@ -148,7 +166,7 @@ function corpus(archive) {
 export function useSearch(query, { archive = false } = {}) {
   const q = query ?? "";
   const served = useApi(
-    q && !SNAPSHOT
+    q && !MOUNTED
       ? `/api/search?q=${encodeURIComponent(q)}${archive ? "&archive=1" : ""}`
       : null,
     { poll: false },
@@ -160,7 +178,7 @@ export function useSearch(query, { archive = false } = {}) {
     loading: false,
   });
   useEffect(() => {
-    if (!SNAPSHOT || !q) return undefined;
+    if (!MOUNTED || !q) return undefined;
     let current = true;
     setDocuments((s) => ({ ...s, loading: true }));
     Promise.all([corpus(false), archive ? corpus(true) : []])
@@ -187,7 +205,7 @@ export function useSearch(query, { archive = false } = {}) {
     [documents.data, q, archive],
   );
 
-  if (!SNAPSHOT) return served;
+  if (!MOUNTED) return served;
   return { data: matched, error: documents.error, loading: documents.loading };
 }
 

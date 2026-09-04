@@ -21,9 +21,8 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { corpusPath, snapshotPath, stamp } from "../src/snapshot.js";
+import { corpusRequest, snapshotPath, stamp } from "../src/snapshot.js";
 import { answer } from "./api.mjs";
-import { corpus } from "./search.mjs";
 import { resolveRoot } from "./store.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
@@ -154,14 +153,8 @@ export function writeSnapshot(
   log(`  ${counts.documents} documents`);
 
   for (const archived of [false, true]) {
-    const path = join(out, corpusPath(archived));
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(
-      path,
-      JSON.stringify({
-        documents: corpus(root.path, { archive: archived ? "only" : false }),
-      }),
-    );
+    const request = corpusRequest(archived);
+    file(request, answer(request));
   }
 
   return { at, out, ...counts };

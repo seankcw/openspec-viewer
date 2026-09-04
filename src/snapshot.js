@@ -17,8 +17,23 @@
  */
 export const SNAPSHOT_META = "openspec-viewer-snapshot";
 
+/**
+ * The tag's value when the page is mounted live rather than frozen: a server answering
+ * the snapshot's paths from the store on each request, as a manual's dev server does
+ * under `/viewer/`. The page then asks relatively, as a snapshot does, but keeps reading
+ * the store as the served page does — nothing on it is older than the last request.
+ */
+export const LIVE = "live";
+
 /** Routes whose answer depends on no argument, filed as one document each. */
 const WHOLE = new Set(["/api/board", "/api/specs", "/api/archive"]);
+
+/**
+ * The searchable text, in two halves: the plan, and the archive. The second is most of
+ * the store's text and all of it frozen, so it is a file of its own, fetched only when
+ * the reader asks for shipped changes — the same choice the served page makes per query.
+ */
+const CORPUS = { "api/search.json": false, "api/search-archive.json": true };
 
 /** Routes filed under their one argument, and which parameter carries it. */
 const BY_ARGUMENT = {
@@ -42,6 +57,8 @@ const BY_ARGUMENT = {
 export function snapshotPath(request) {
   const url = new URL(request, "http://localhost");
   if (WHOLE.has(url.pathname)) return `api${url.pathname.slice(4)}.json`;
+  if (url.pathname === "/api/corpus")
+    return corpusPath(url.searchParams.get("archive") === "1");
 
   const param = BY_ARGUMENT[url.pathname];
   if (!param) throw new Error(`no snapshot for ${url.pathname}`);
@@ -52,13 +69,35 @@ export function snapshotPath(request) {
   return `api${url.pathname.slice(4)}/${segments}.json`;
 }
 
-/**
- * The searchable text of the store, in two halves: the plan, and the archive. The second
- * is most of the store's text and all of it frozen, so it is fetched only when the reader
- * asks for shipped changes — the same choice the served page makes per query.
- */
+/** Where the corpus half is filed — see `CORPUS`. */
 export const corpusPath = (archive) =>
   archive ? "api/search-archive.json" : "api/search.json";
+
+/** The request whose answer is one corpus half, for a writer that goes through `answer`. */
+export const corpusRequest = (archive) =>
+  archive ? "/api/corpus?archive=1" : "/api/corpus";
+
+/**
+ * The request a snapshot file answers — `snapshotPath` read backwards — or null when the
+ * path is no file a snapshot writes. This is what lets a server stand where the files
+ * would be: asked for `api/change/guest-checkout.json`, it answers `/api/change?id=guest-checkout`
+ * from the store instead of from disk, and the page cannot tell the difference.
+ */
+export function requestFor(file) {
+  if (file in CORPUS) return corpusRequest(CORPUS[file]);
+
+  const match = file.match(/^api\/([^/]+?)(?:\/(.+))?\.json$/);
+  if (!match) return null;
+  const [, route, rest] = match;
+  const pathname = `/api/${route}`;
+
+  if (WHOLE.has(pathname)) return rest === undefined ? pathname : null;
+
+  const param = BY_ARGUMENT[pathname];
+  if (!param || rest === undefined) return null;
+  const value = rest.split("/").map(decodeURIComponent).join("/");
+  return `${pathname}?${param}=${encodeURIComponent(value)}`;
+}
 
 /**
  * The page's own `<head>`, with the snapshot tag in it. The built page is copied whole

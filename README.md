@@ -403,6 +403,17 @@ itself, which is what lets a deep link into a single-page site load at all, and 
 document not in the snapshot arrives as HTML with a 200 on it. The page checks the content
 type before parsing and reports `Not in this snapshot` rather than a parser's confusion.
 
+**Or mounted live, under a path.** A host that has the store but not the root — a
+manual's dev server, which owns `/` — can stand where the files would be: `mounted()` in
+`server/mount.mjs` is a connect handler that serves the page stamped `live` and answers
+each snapshot path from the store as the request arrives, `requestFor` reading the file's
+name back into the request it stands for. The page asks relatively, as a snapshot does,
+and keeps polling, as the served page does; only the address differs.
+
+```js
+server.middlewares.use("/viewer", mounted()); // vite, express, connect
+```
+
 **What it costs.** A snapshot of a store here is about a thousand files and fourteen
 megabytes of JSON, most of it the archive and the documents, and forty seconds to write
 with validation on. `--no-validate` drops the CLI runs, which are most of that time.

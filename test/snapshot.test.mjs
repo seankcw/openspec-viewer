@@ -16,6 +16,7 @@ import { storeDocuments } from "../server/snapshot.mjs";
 import { searchDocuments } from "../src/search.js";
 import {
   corpusPath,
+  requestFor,
   SNAPSHOT_META,
   snapshotPath,
   stamp,
@@ -140,5 +141,41 @@ describe("searchDocuments", () => {
     assert.equal(answer.results[0].scope, "baseline");
     assert.equal(answer.results[0].defines, true);
     assert.equal(answer.results[1].scope, "development");
+  });
+});
+
+describe("requestFor", () => {
+  // The writer files by `snapshotPath`; a host standing in for the files reads the name
+  // back with this. Every request the page can make has to survive the round trip, or
+  // the host answers a different question than the page asked.
+  const requests = [
+    "/api/board",
+    "/api/specs",
+    "/api/archive",
+    "/api/change?id=add-guest-checkout",
+    "/api/validate?id=add-guest-checkout",
+    "/api/spec?id=storefront%2Fcheckout",
+    "/api/doc?path=docs%2Fprds%2Fcart.md",
+    "/api/doc?path=docs%2Fa%20note.md",
+    "/api/corpus",
+    "/api/corpus?archive=1",
+  ];
+
+  for (const request of requests) {
+    it(`reads ${request} back from its file`, () => {
+      assert.equal(requestFor(snapshotPath(request)), request);
+    });
+  }
+
+  it("files the corpus where the page looks for it", () => {
+    assert.equal(snapshotPath("/api/corpus"), corpusPath(false));
+    assert.equal(snapshotPath("/api/corpus?archive=1"), corpusPath(true));
+  });
+
+  it("is null for a path no snapshot writes", () => {
+    assert.equal(requestFor("api/nothing.json"), null);
+    assert.equal(requestFor("api/board/extra.json"), null);
+    assert.equal(requestFor("api/change.json"), null);
+    assert.equal(requestFor("assets/index.js"), null);
   });
 });
