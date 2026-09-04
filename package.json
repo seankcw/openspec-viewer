@@ -39,6 +39,8 @@
     "lib",
     "src/spec.js",
     "src/bdd.js",
+    "src/search.js",
+    "src/snapshot.js",
     "README.md",
     "LICENSE"
   ],

@@ -94,6 +94,21 @@ export function warmUp() {
 export const isApiPath = (pathname) => pathname.startsWith("/api/");
 
 /**
+ * The answer to one request, as the route would give it. Throws on a path no route
+ * owns, and returns the route's own `{ error }` for an argument it cannot serve.
+ *
+ * The one entry both the handler below and the snapshot writer go through, so a
+ * snapshot files exactly what the server would have said — an answer that differs
+ * between the two is the failure this file exists to make impossible.
+ */
+export function answer(request) {
+  const url = new URL(request, "http://localhost");
+  const route = ROUTES[url.pathname];
+  if (!route) throw new Error(`no route ${url.pathname}`);
+  return route(url);
+}
+
+/**
  * `(req, res) => void`, in the shape both connect and `node:http` accept.
  *
  * Vite mounts it at '/api' and rewrites `req.url` to the remainder, keeping the browser's
